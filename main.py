@@ -1,6 +1,7 @@
 import os
 import traceback
 
+import eyed3
 import spotipy
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from pytube import YouTube as YTDownloader
@@ -34,20 +35,22 @@ def get_playlist_tracks(playlist_id):
     return tracks
 
 
-def get_track_name_and_artists(track):
+def get_track_info(track):
     name = track["name"]
     artists = [artist["name"] for artist in track["artists"]]
-    return name, artists
+    album = track["album"]["name"]
+    return name, artists, album
 
 
-def get_first_youtube_video(query):
+def get_first_youtube_video(name, artists, album):
+    query = f"{', '.join(artists)} - {name} Lyrics"
     tries = 0
     while True:
         try:
             print(f"Searching for '{query}'")
             video_id = YoutubeSearch(query, max_results=1).videos[0]["id"]
-            return video_id
-        except Exception as err:
+            return video_id, name, artists, album
+        except Exception:
             tries += 1
             if tries >= 3:
                 print(f"Could not download {query}:")
@@ -63,7 +66,7 @@ def get_first_youtube_video(query):
     # return first_result["video_title"], first_result["video_id"]
 
 
-def download_video(video_id):
+def download_video(video_id, name, artists, album):
     tries = 0
     while True:
         try:
@@ -71,7 +74,7 @@ def download_video(video_id):
             yt = YTDownloader(f"http://youtube.com/watch?v={video_id}")
             video = yt.streams.filter(subtype="mp4")[0]
             filepath = video.download(os.path.abspath("temp"))
-            convert_to_mp3(filepath)
+            convert_to_mp3(filepath, name, artists, album)
             return
         except Exception:
             tries += 1
@@ -81,7 +84,7 @@ def download_video(video_id):
                 print("Skipping track\n")
 
 
-def convert_to_mp3(filepath, save_folder=os.path.abspath("download")):
+def convert_to_mp3(filepath, name, artists, album, save_folder=os.path.abspath("download")):
     prevdir = os.getcwd()
     try:
         os.mkdir(save_folder)
@@ -92,9 +95,18 @@ def convert_to_mp3(filepath, save_folder=os.path.abspath("download")):
         with VideoFileClip(filepath) as video:
             savepath = os.path.basename(filepath[:-1]) + "3"
             video.audio.write_audiofile(savepath)
+            tag_mp3(savepath, name, artists, album)
         os.remove(filepath)
     finally:
         os.chdir(prevdir)
+
+
+def tag_mp3(path, name, artists, album):
+    audiofile = eyed3.load(path)
+    audiofile.tag.title = name
+    audiofile.tag.artist = "; ".join(artists)
+    audiofile.tag.album = album
+    audiofile.tag.save()
 
 
 def main():
@@ -117,9 +129,9 @@ def main():
             for number, track in enumerate(tracks):
                 try:
                     print(f"Track {number + 1}/{len(tracks)}")
-                    name, artists = get_track_name_and_artists(track)
+                    name, artists, album = get_track_info(track)
                     download_video(
-                        get_first_youtube_video(f"{', '.join(artists)} - {name} Lyrics")
+                        *get_first_youtube_video(name, artists, album)
                     )
                     print()
                 except Exception:
@@ -131,7 +143,6 @@ def main():
             print(f"Skipped {len(skipped_files)} file(s):")
             print(skipped_files)
             print()
-            shutil.rmtree(os.path.abspath("temp"))
 
         except Exception:
             print("\nAn error occured: ")
@@ -140,5 +151,6 @@ def main():
             if close_program == "y":
                 break
             print()
+
 
 main()
