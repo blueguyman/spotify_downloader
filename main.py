@@ -8,12 +8,9 @@ from pytube import YouTube as YTDownloader
 from spotipy.oauth2 import SpotifyClientCredentials
 from youtube_search import YoutubeSearch
 
-# from youtube_api import YoutubeDataApi
-
 
 SP_CLIENT_ID = "bb7d22c03cab46f09130bacc526d29db"
 SP_CLIENT_SECRET = "d99686f18e8743a38e29783523252f90"
-# YT_KEY = "AIzaSyCLHSFy2WQ7lO9-Mo-ks0AjBaQRy0tavl4"
 
 SPOTIFY = spotipy.Spotify(
     auth_manager=SpotifyClientCredentials(
@@ -21,8 +18,6 @@ SPOTIFY = spotipy.Spotify(
         client_secret=SP_CLIENT_SECRET,
     )
 )
-
-# YOUTUBE = YoutubeDataApi(YT_KEY)
 
 
 def get_playlist_tracks(playlist_id):
@@ -56,14 +51,6 @@ def get_first_youtube_video(name, artists, album):
                 print(f"Could not download {query}:")
                 traceback.print_exc()
                 print("Skipping track\n")
-
-    # print(f"Searching for '{query}'")
-    # html = requests.get("https://www.youtube.com/results?search_query=" + query)
-    # video_ids = re.findall(r"watch\?v=(\S{11})", html.text)
-    # return video_ids[0]
-
-    # first_result = YOUTUBE.search(q=query, max_results=1)[0]
-    # return first_result["video_title"], first_result["video_id"]
 
 
 def download_video(video_id, name, artists, album):
