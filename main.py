@@ -1,143 +1,295 @@
+import multiprocessing as mp
 import os
-import traceback
+import queue
+import sys
 
 import eyed3
 import spotipy
 from moviepy.video.io.VideoFileClip import VideoFileClip
-from pytube import YouTube as YTDownloader
+from pytube import YouTube
 from spotipy.oauth2 import SpotifyClientCredentials
 from youtube_search import YoutubeSearch
 
-
-SP_CLIENT_ID = "bb7d22c03cab46f09130bacc526d29db"
-SP_CLIENT_SECRET = "d99686f18e8743a38e29783523252f90"
-
-SPOTIFY = spotipy.Spotify(
-    auth_manager=SpotifyClientCredentials(
-        client_id=SP_CLIENT_ID,
-        client_secret=SP_CLIENT_SECRET,
-    )
-)
-
-
-def get_playlist_tracks(playlist_id):
-    results = SPOTIFY.playlist_tracks(playlist_id)
-    tracks = results["items"]
-    while results["next"]:
-        results = SPOTIFY.next(results)
-        tracks.extend(results["items"])
-    tracks = [track["track"] for track in tracks]
-    return tracks
-
-
-def get_track_info(track):
-    name = track["name"]
-    artists = [artist["name"] for artist in track["artists"]]
-    album = track["album"]["name"]
-    return name, artists, album
-
-
-def get_first_youtube_video(name, artists, album):
-    query = f"{', '.join(artists)} - {name} Lyrics"
-    tries = 0
-    while True:
-        try:
-            print(f"Searching for '{query}'")
-            video_id = YoutubeSearch(query, max_results=1).videos[0]["id"]
-            return video_id, name, artists, album
-        except Exception:
-            tries += 1
-            if tries >= 3:
-                print(f"Could not download {query}:")
-                traceback.print_exc()
-                print("Skipping track\n")
-
-
-def download_video(video_id, name, artists, album):
-    tries = 0
-    while True:
-        try:
-            print("Downloading first result")
-            yt = YTDownloader(f"http://youtube.com/watch?v={video_id}")
-            video = yt.streams.filter(subtype="mp4")[0]
-            filepath = video.download(os.path.abspath("temp"))
-            convert_to_mp3(filepath, name, artists, album)
-            return
-        except Exception:
-            tries += 1
-            if tries >= 3:
-                print("An error occured:")
-                traceback.print_exc()
-                print("Skipping track\n")
-
-
-def convert_to_mp3(filepath, name, artists, album, save_folder=os.path.abspath("download")):
-    prevdir = os.getcwd()
-    try:
-        os.mkdir(save_folder)
-    except FileExistsError:
-        pass
-    os.chdir(save_folder)
-    try:
-        with VideoFileClip(filepath) as video:
-            savepath = os.path.basename(filepath[:-1]) + "3"
-            video.audio.write_audiofile(savepath)
-            tag_mp3(savepath, name, artists, album)
-        os.remove(filepath)
-    finally:
-        os.chdir(prevdir)
-
-
-def tag_mp3(path, name, artists, album):
-    audiofile = eyed3.load(path)
-    audiofile.tag.title = name
-    audiofile.tag.artist = "; ".join(artists)
-    audiofile.tag.album = album
-    audiofile.tag.save()
+TIMEOUT = 30
+SAVE_FOLDER = "download"
+DEBUG = False
 
 
 def main():
-    print("SPOTIFY DOWNLOADER v0.1\n")
-    print("Type 'exit' to exit. Use Ctrl+C to stop download.\n")
+    sp = spotipy.Spotify(
+        auth_manager=SpotifyClientCredentials(
+            client_id="bb7d22c03cab46f09130bacc526d29db",
+            client_secret="d99686f18e8743a38e29783523252f90",
+        )
+    )
+
+    print("SPOTIFY DOWNLOADER v0.2\n")
+    print("Type 'exit' to exit.\n")
+    while True:
+        playlist_url = input("spotify_playlist_link> ")
+        print()
+
+        if playlist_url.lower().strip() == "exit":
+            break
+
+        downloader(sp, playlist_url)
+
+
+def downloader(sp, playlist_id):
+
+    tracks = get_playlist_tracks(sp, playlist_id)
+
+    lock = mp.Lock()
+
+    track_queue = mp.Queue()
+    yt_link_queue = mp.Queue()
+    mp4_file_queue = mp.Queue()
+    mp3_file_queue = mp.Queue()
+
+    pr_queue_tracks = mp.Process(target=queue_tracks, args=(lock, tracks, track_queue))
+    pr_queue_tracks.start()
+
+    pr_queue_video_links = mp.Process(
+        target=get_video_links, args=(lock, track_queue, yt_link_queue, len(tracks))
+    )
+    pr_queue_video_links.start()
+
+    pr_queue_mp4_files = mp.Process(
+        target=download_mp4_files,
+        args=(lock, yt_link_queue, mp4_file_queue, len(tracks)),
+    )
+    pr_queue_mp4_files.start()
+
+    pr_queue_mp3_files = mp.Process(
+        target=convert_mp4_files_to_mp3,
+        args=(lock, mp4_file_queue, mp3_file_queue, len(tracks)),
+    )
+    pr_queue_mp3_files.start()
+
+    pr_tag_mp3s = mp.Process(
+        target=tag_mp3_files, args=(lock, mp3_file_queue, len(tracks))
+    )
+    pr_tag_mp3s.start()
+
+    pr_queue_tracks.join()
+    pr_queue_video_links.join()
+    pr_queue_mp4_files.join()
+    pr_queue_mp3_files.join()
+    pr_tag_mp3s.join()
+
+    print("\nDownload completed.\n")
+
+
+def mp_print(
+    lock, *args, sep=" ", end="\n", file=sys.stdout, flush=False, debug_only=True
+):
+    if debug_only and not DEBUG:
+        return
+    lock.acquire()
+    print(*args, sep=sep, end=end, file=file, flush=flush)
+    lock.release()
+
+
+def get_playlist_tracks(sp, playlist_id):
+    results = sp.playlist_tracks(playlist_id)
+
+    tracks = results["items"]
+    while results["next"]:
+        results = sp.next(results)
+        tracks.extend(results["items"])
+    tracks = [format_track(track) for track in tracks]
+
+    return tracks
+
+
+def format_track(track):
+    track = track["track"]
+    formatted_track = {}
+    formatted_track["title"] = track["name"]
+    formatted_track["artists"] = [artist["name"] for artist in track["artists"]]
+    formatted_track["album"] = track["album"]["name"]
+    formatted_track["album_artists"] = [
+        artist["name"] for artist in track["album"]["artists"]
+    ]
+    formatted_track["year"] = track["album"]["release_date"][:4]
+    formatted_track["track_number"] = track["track_number"]
+    formatted_track["total_tracks"] = track["album"]["total_tracks"]
+
+    return formatted_track
+
+
+def queue_tracks(lock, tracks, output_queue):
+    mp_print(lock, f"Found {len(tracks)} tracks in playlist.\n", debug_only=False)
+    for track in tracks:
+        output_queue.put(track)
+    output_queue.close()
+
+
+def get_video_links(lock, track_queue, output_queue, total_tracks):
+    tracks_found = 0
     while True:
         try:
-            playlist_url = input("spotify_playlist_link> ")
-            print()
+            track = track_queue.get(timeout=TIMEOUT)
 
-            if playlist_url.lower().strip() == "exit":
+            query = f"{', '.join(track['artists'])} - {track['title']} Lyrics"
+            mp_print(lock, "INFO:", f"Searching for '{query}'")
+
+            video = YoutubeSearch(query, max_results=1).videos[0]
+            tracks_found += 1
+            mp_print(
+                lock,
+                "INFO:",
+                f"Found '{video['title']}' at https://www.youtube.com/watch?v={video['id']}",
+                f"[{tracks_found}/{total_tracks}]",
+            )
+            output_queue.put((track, video))
+
+            if tracks_found == total_tracks:
                 break
+        except queue.Empty:
+            break
 
-            tracks = get_playlist_tracks(playlist_url)
+    mp_print(lock, "COMPLETED:", f"Found {tracks_found} tracks on YouTube")
+    output_queue.close()
 
-            print(f"Found {len(tracks)} track(s).\n")
 
-            skipped_files = []
+def download_mp4_files(lock, yt_link_queue, output_queue, total_tracks):
+    tracks_downloaded = 0
+    while True:
+        try:
+            track, video_info = yt_link_queue.get(timeout=TIMEOUT)
 
-            for number, track in enumerate(tracks):
+            while True:
+                tries = 0
                 try:
-                    print(f"Track {number + 1}/{len(tracks)}")
-                    name, artists, album = get_track_info(track)
-                    download_video(
-                        *get_first_youtube_video(name, artists, album)
+                    yt = YouTube(f"http://youtube.com/watch?v={video_info['id']}")
+                    video = yt.streams.filter(subtype="mp4")[0]
+
+                    mp_print(lock, "INFO:", f"Downloading '{video_info['title']}'")
+                    filepath = video.download(os.path.abspath("temp"))
+                    tracks_downloaded += 1
+                    mp_print(
+                        lock,
+                        "INFO:",
+                        f"Finished downloading '{video_info['title']}'",
+                        f"[{tracks_downloaded}/{total_tracks}]",
                     )
-                    print()
-                except Exception:
-                    print("\nAn error occured during download of this file: ")
-                    traceback.print_exc()
-                    print("\nSkipping file.\n")
-                    skipped_files.append(track["name"])
-
-            print(f"Skipped {len(skipped_files)} file(s):")
-            print(skipped_files)
-            print()
-
-        except Exception:
-            print("\nAn error occured: ")
-            traceback.print_exc()
-            close_program = input("\nClose program? (y/n): ")[0].lower()
-            if close_program == "y":
+                    output_queue.put((track, filepath))
+                    break
+                except KeyError as err:
+                    tries += 1
+                    if tries >= 3:
+                        mp_print(
+                            lock,
+                            "ERROR:",
+                            f"An error occured during download of '{video_info['title']}':",
+                            err,
+                        )
+                        break
+            if tracks_downloaded == total_tracks:
                 break
-            print()
+
+        except queue.Empty:
+            break
+
+    mp_print(lock, "COMPLETED:", f"Downloaded {tracks_downloaded} tracks from YouTube")
+    output_queue.close()
 
 
-main()
+def convert_mp4_files_to_mp3(lock, mp4_file_queue, output_queue, total_tracks):
+    tracks_converted = 0
+    prevdir = os.getcwd()
+
+    while True:
+        try:
+            track, filepath = mp4_file_queue.get(timeout=TIMEOUT)
+
+            try:
+                os.mkdir(SAVE_FOLDER)
+            except FileExistsError:
+                pass
+
+            os.chdir(SAVE_FOLDER)
+
+            try:
+                with VideoFileClip(filepath) as video:
+                    mp_print(lock, "INFO:", f"Converting {filepath} to mp3")
+                    savepath = os.path.basename(filepath[:-1]) + "3"
+                    video.audio.write_audiofile(savepath, verbose=False, logger=None)
+                    tracks_converted += 1
+                    mp_print(
+                        lock,
+                        "INFO:",
+                        f"Saved {savepath}",
+                        f"[{tracks_converted}/{total_tracks}]",
+                    )
+                    output_queue.put((track, savepath))
+            finally:
+                os.chdir(prevdir)
+
+            os.remove(filepath)
+
+            if tracks_converted == total_tracks:
+                break
+
+        except queue.Empty:
+            break
+        finally:
+            os.chdir(prevdir)
+
+    mp_print(lock, "COMPLETED:", f"Converted {tracks_converted} tracks to mp3")
+    output_queue.close()
+
+
+def tag_mp3_files(lock, mp3_file_queue, total_tracks):
+    tracks_tagged = 0
+    prevdir = os.getcwd()
+    while True:
+        try:
+            try:
+                os.mkdir(SAVE_FOLDER)
+            except FileExistsError:
+                pass
+
+            os.chdir(SAVE_FOLDER)
+
+            try:
+                track, path = mp3_file_queue.get(timeout=TIMEOUT)
+
+                audiofile = eyed3.load(path)
+                audiofile.tag.title = track["title"]
+                audiofile.tag.artist = "; ".join(track["artists"])
+                audiofile.tag.album = track["album"]
+                audiofile.tag.album_artist = "; ".join(track["album_artists"])
+                audiofile.tag.track_num = (track["track_number"], track["total_tracks"])
+                audiofile.tag.save()
+
+                tracks_tagged += 1
+                mp_print(
+                    lock,
+                    "INFO:",
+                    f"Tagged file {path}",
+                    f"[{tracks_tagged}/{total_tracks}]",
+                )
+                mp_print(
+                    lock,
+                    f"Progress: {tracks_tagged}/{total_tracks} tracks. [{track['title']}]",
+                    debug_only=False,
+                )
+
+                if tracks_tagged == total_tracks:
+                    break
+            finally:
+                os.chdir(prevdir)
+
+        except queue.Empty:
+            break
+        finally:
+            os.chdir(prevdir)
+
+    mp_print(lock, "COMPLETED:", f"Tagged {tracks_tagged} mp3 files")
+
+
+if __name__ == "__main__":
+    mp.freeze_support()
+    main()
