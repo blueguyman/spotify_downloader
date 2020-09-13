@@ -18,8 +18,8 @@ DEBUG = False
 def main():
     sp = spotipy.Spotify(
         auth_manager=SpotifyClientCredentials(
-            client_id="bb7d22c03cab46f09130bacc526d29db",
-            client_secret="d99686f18e8743a38e29783523252f90",
+            client_id="CLIENT_ID",
+            client_secret="CLIENT_SECRET",
         )
     )
 
