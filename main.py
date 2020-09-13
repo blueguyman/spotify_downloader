@@ -10,6 +10,8 @@ from pytube import YouTube
 from spotipy.oauth2 import SpotifyClientCredentials
 from youtube_search import YoutubeSearch
 
+import api_keys
+
 TIMEOUT = 30
 SAVE_FOLDER = "download"
 DEBUG = False
@@ -18,8 +20,8 @@ DEBUG = False
 def main():
     sp = spotipy.Spotify(
         auth_manager=SpotifyClientCredentials(
-            client_id="CLIENT_ID",
-            client_secret="CLIENT_SECRET",
+            client_id=api_keys.CLIENT_ID,
+            client_secret=api_keys.CLIENT_SECRET,
         )
     )
 
