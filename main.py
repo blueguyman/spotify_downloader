@@ -1,3 +1,4 @@
+import time
 import multiprocessing as mp
 import os
 import queue
@@ -50,6 +51,7 @@ def downloader(sp, playlist_id):
     yt_link_queue = mp.Queue()
     mp4_file_queue = mp.Queue()
     mp3_file_queue = mp.Queue()
+    tagged_files_queue = mp.Queue()
 
     pr_queue_tracks = mp.Process(target=queue_tracks, args=(tracks, track_queue))
     pr_queue_tracks.start()
@@ -71,14 +73,22 @@ def downloader(sp, playlist_id):
     )
     pr_queue_mp3_files.start()
 
-    pr_tag_mp3s = mp.Process(target=tag_mp3_files, args=(mp3_file_queue, len(tracks)))
+    pr_tag_mp3s = mp.Process(
+        target=tag_mp3_files, args=(mp3_file_queue, tagged_files_queue, len(tracks))
+    )
     pr_tag_mp3s.start()
+
+    pr_progress_bar = mp.Process(
+        target=display_progress, args=(tagged_files_queue, len(tracks))
+    )
+    pr_progress_bar.start()
 
     pr_queue_tracks.join()
     pr_queue_video_links.join()
     pr_queue_mp4_files.join()
     pr_queue_mp3_files.join()
     pr_tag_mp3s.join()
+    pr_progress_bar.join()
 
     print("\nDownload completed.\n")
 
@@ -244,16 +254,12 @@ def convert_mp4_files_to_mp3(mp4_file_queue, output_queue, total_tracks):
     output_queue.close()
 
 
-def tag_mp3_files(mp3_file_queue, total_tracks):
+def tag_mp3_files(mp3_file_queue, output_queue, total_tracks):
     tracks_tagged = 0
     prevdir = os.getcwd()
 
     while mp3_file_queue.empty():
         pass
-
-    if not DEBUG:
-        bar = progressbar.ProgressBar(max_value=total_tracks)
-        bar.start()
 
     while True:
         try:
@@ -281,14 +287,7 @@ def tag_mp3_files(mp3_file_queue, total_tracks):
                     f"Tagged file {path}",
                     f"[{tracks_tagged}/{total_tracks}]",
                 )
-                if DEBUG:
-                    mp_print(
-                        f"Progress: {tracks_tagged}/{total_tracks} tracks. [{track['title']}]",
-                    )
-                else:
-                    bar.update(tracks_tagged)
-                if tracks_tagged == total_tracks:
-                    break
+                output_queue.put((track, tracks_tagged))
             finally:
                 os.chdir(prevdir)
 
@@ -297,8 +296,40 @@ def tag_mp3_files(mp3_file_queue, total_tracks):
         finally:
             os.chdir(prevdir)
 
-    bar.finish()
     mp_print("COMPLETED:", f"Tagged {tracks_tagged} mp3 files")
+    output_queue.close()
+
+
+def display_progress(tagged_files_queue, total_tracks):
+    if not DEBUG:
+        bar = progressbar.ProgressBar(max_value=total_tracks)
+        bar.start()
+
+    track = None
+    progress = 0
+    last_get = time.time()
+
+    while True:
+        try:
+            track, progress = tagged_files_queue.get(block=False)
+            last_get = time.time()
+        except queue.Empty:
+            # This may or may not work. I haven't encountered an issue like this yet.
+            if time.time() - last_get > TIMEOUT:
+                break
+
+        if DEBUG:
+            if track:
+                mp_print(
+                    f"Progress: {progress}/{total_tracks} tracks. [{track['title']}]",
+                )
+        else:
+            bar.update(progress)
+
+        if progress == total_tracks:
+            break
+
+    bar.finish()
 
 
 if __name__ == "__main__":
