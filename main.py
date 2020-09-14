@@ -39,7 +39,11 @@ def main():
 
 
 def downloader(sp, playlist_id):
-    tracks = get_playlist_tracks(sp, playlist_id)
+    try:
+        tracks = get_playlist_tracks(sp, playlist_id)
+    except spotipy.SpotifyException:
+        print("Invalid playlist link.\n")
+        return
 
     track_queue = mp.Queue()
     yt_link_queue = mp.Queue()
