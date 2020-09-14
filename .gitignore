@@ -126,4 +126,5 @@ dmypy.json
 
 
 *.mp3
+*.mp4
 api_keys.py
