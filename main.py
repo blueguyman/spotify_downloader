@@ -309,18 +309,19 @@ def display_progress(tagged_files_queue, total_tracks):
 
     if not DEBUG:
         widgets = [
-            "Progress: ",
+            "[Progress: ",
             progressbar.Percentage(),
-            " [",
+            "] [",
             progressbar.Counter(),
             f"/{total_tracks}] ",
-            progressbar.Bar(),
+            progressbar.Bar(left="[", right="]"),
             " [",
             progressbar.Variable("Track"),
-            "] ",
+            "] [",
             progressbar.Timer(),
-            " ",
+            "] [",
             progressbar.AdaptiveETA(),
+            "]",
         ]
         bar = progressbar.ProgressBar(max_value=total_tracks, widgets=widgets).start()
 
@@ -350,7 +351,8 @@ def display_progress(tagged_files_queue, total_tracks):
         if progress == total_tracks:
             break
 
-    bar.finish()
+    if not DEBUG:
+        bar.finish()
 
 
 if __name__ == "__main__":
