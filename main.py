@@ -5,6 +5,7 @@ import sys
 
 import eyed3
 import spotipy
+import progressbar
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from pytube import YouTube
 from spotipy.oauth2 import SpotifyClientCredentials
@@ -246,8 +247,14 @@ def convert_mp4_files_to_mp3(mp4_file_queue, output_queue, total_tracks):
 def tag_mp3_files(mp3_file_queue, total_tracks):
     tracks_tagged = 0
     prevdir = os.getcwd()
+
     while mp3_file_queue.empty():
         pass
+
+    if not DEBUG:
+        bar = progressbar.ProgressBar(max_value=total_tracks)
+        bar.start()
+
     while True:
         try:
             try:
@@ -274,11 +281,12 @@ def tag_mp3_files(mp3_file_queue, total_tracks):
                     f"Tagged file {path}",
                     f"[{tracks_tagged}/{total_tracks}]",
                 )
-                mp_print(
-                    f"Progress: {tracks_tagged}/{total_tracks} tracks. [{track['title']}]",
-                    debug_only=False,
-                )
-
+                if DEBUG:
+                    mp_print(
+                        f"Progress: {tracks_tagged}/{total_tracks} tracks. [{track['title']}]",
+                    )
+                else:
+                    bar.update(tracks_tagged)
                 if tracks_tagged == total_tracks:
                     break
             finally:
@@ -289,6 +297,7 @@ def tag_mp3_files(mp3_file_queue, total_tracks):
         finally:
             os.chdir(prevdir)
 
+    bar.finish()
     mp_print("COMPLETED:", f"Tagged {tracks_tagged} mp3 files")
 
 
