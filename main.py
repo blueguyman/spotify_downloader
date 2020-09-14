@@ -47,6 +47,9 @@ def downloader(sp, playlist_id):
         print("Invalid playlist link.\n")
         return
 
+    print(f"Found {len(tracks)} tracks in playlist.")
+    print("Interrupting download may cause file corruption.\n")
+
     track_queue = mp.Queue()
     yt_link_queue = mp.Queue()
     mp4_file_queue = mp.Queue()
@@ -130,7 +133,6 @@ def format_track(track):
 
 
 def queue_tracks(tracks, output_queue):
-    mp_print(f"Found {len(tracks)} tracks in playlist.\n", debug_only=False)
     for track in tracks:
         output_queue.put(track)
     output_queue.close()
@@ -301,13 +303,26 @@ def tag_mp3_files(mp3_file_queue, output_queue, total_tracks):
 
 
 def display_progress(tagged_files_queue, total_tracks):
-    if not DEBUG:
-        bar = progressbar.ProgressBar(max_value=total_tracks)
-        bar.start()
-
-    track = None
+    track = {"title": ""}
     progress = 0
     last_get = time.time()
+
+    if not DEBUG:
+        widgets = [
+            "Progress: ",
+            progressbar.Percentage(),
+            " [",
+            progressbar.Counter(),
+            f"/{total_tracks}] ",
+            progressbar.Bar(),
+            " [",
+            progressbar.Variable("Track"),
+            "] ",
+            progressbar.Timer(),
+            " ",
+            progressbar.AdaptiveETA(),
+        ]
+        bar = progressbar.ProgressBar(max_value=total_tracks, widgets=widgets).start()
 
     while True:
         try:
@@ -324,7 +339,13 @@ def display_progress(tagged_files_queue, total_tracks):
                     f"Progress: {progress}/{total_tracks} tracks. [{track['title']}]",
                 )
         else:
-            bar.update(progress)
+            title_len = 24
+            title = track["title"]
+            if len(title) <= title_len:
+                title = title.rjust(title_len)
+            else:
+                title = title[: title_len - 3] + "..."
+            bar.update(progress, Track=title)
 
         if progress == total_tracks:
             break
