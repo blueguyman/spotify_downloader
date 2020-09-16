@@ -14,7 +14,7 @@ from youtube_search import YoutubeSearch
 import api_keys
 
 SAVE_FOLDER = "_download"
-TEMP_FOLDER = "_temp"
+TEMP_FOLDER = "_download"
 TIMEOUT = 30
 
 
