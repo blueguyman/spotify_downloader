@@ -115,7 +115,7 @@ def show_progress(progress_queue, tracks):
         "[Progress: ",
         progressbar.Percentage(),
         "] ",
-        progressbar.Bar(left="[", right="]"),
+        progressbar.Bar("█"),
         " [",
         progressbar.Timer(),
         "] [",
